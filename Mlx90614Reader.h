@@ -7,8 +7,11 @@ class Mlx90614Reader {
 public:
   Mlx90614Reader();
 
-  void begin();       // inicializa sensor en el mismo Wire de Max30102Reader
-  void printOnce();   // lee e imprime una vez
+  void begin();
+  void printOnce();
+
+  double readAmbientTemp();
+  double readObjectTemp();  // Retorna -1.0 si está fuera de rango
 
 private:
   Adafruit_MLX90614 mlx;
