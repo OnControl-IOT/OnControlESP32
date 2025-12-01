@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 #include "Max30102Reader.h"
 #include "Mlx90614Reader.h"
@@ -8,9 +9,20 @@
 // ============================================
 // CONFIGURACION - MODIFICAR SEGUN TU RED
 // ============================================
-const char* WIFI_SSID     = "ROMI";
-const char* WIFI_PASSWORD = "Surco2024";
-const char* API_URL       = "http://pruebaiot.free.beeceptor.com/api/v1/data-records/";
+const char* WIFI_SSID     = "WIFI";
+const char* WIFI_PASSWORD = "CONTRASEÑA";
+const char* API_URL       = "https://carrie-resorptive-lorelei.ngrok-free.dev/OnControl/parameters";
+
+// ============================================
+// CONFIGURACION DEL DISPOSITIVO (CREDENCIALES)
+// ============================================
+const char* DEVICE_ID = "smart-band-001";    // ID unico del dispositivo
+const char* API_KEY   = "test-api-key-123";  // API Key asignada a este device
+
+// ============================================
+// ACTUADORES
+// ============================================
+const int LED_PIN = 2; // LED (en muchos ESP32 el LED integrado está en el pin 2)
 
 // ============================================
 // TIEMPOS DE LECTURA (en milisegundos)
@@ -57,8 +69,8 @@ struct VitalSigns {
     tempSum = 0; tempCount = 0;
   }
 
-  float getBpmAvg() { return (bpmCount > 0) ? bpmSum / bpmCount : 0; }
-  float getSpo2Avg() { return (spo2Count > 0) ? spo2Sum / spo2Count : 0; }
+  float getBpmAvg()   { return (bpmCount  > 0) ? bpmSum  / bpmCount  : 0; }
+  float getSpo2Avg()  { return (spo2Count > 0) ? spo2Sum / spo2Count : 0; }
   double getTempAvg() { return (tempCount > 0) ? tempSum / tempCount : 0; }
 } vitals;
 
@@ -67,18 +79,18 @@ struct VitalSigns {
 // ============================================
 
 void printHeader(const char* title) {
-  Serial.println(F(""));
+  Serial.println();
   Serial.println(F("============================================"));
   Serial.print(F("  "));
   Serial.println(title);
   Serial.println(F("============================================"));
-  Serial.println(F(""));
+  Serial.println();
 }
 
 void printProgress(unsigned long elapsed, unsigned long total) {
   int percent = (elapsed * 100) / total;
   int seconds = (total - elapsed) / 1000;
-  
+
   Serial.print(F("["));
   for (int i = 0; i < 20; i++) {
     if (i < percent / 5) Serial.print(F("#"));
@@ -109,7 +121,7 @@ bool waitForUserConfirmation() {
 void connectWiFi() {
   Serial.print(F("Conectando a WiFi"));
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
+
   int retries = 30;
   while (WiFi.status() != WL_CONNECTED && retries-- > 0) {
     delay(500);
@@ -133,26 +145,61 @@ void sendToAPI(float bpm, float spo2, double temp) {
 
   HTTPClient http;
   http.begin(API_URL);
-  http.addHeader("Content-Type", "application/json");
 
-  // Construir JSON
+  // Cabeceras
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", API_KEY);
+
+  // Construir JSON con device_id
   String json = "{";
+  json += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   json += "\"bpm\":" + String(bpm, 1) + ",";
-  json += "\"spo2\":" + String(spo2, 1) + ",";
-  json += "\"temperatura\":" + String(temp, 2);
+  json += "\"temp\":" + String(temp, 2) + ",";
+  json += "\"spo2\":" + String(spo2, 1);
   json += "}";
 
-  Serial.print(F("Enviando: "));
+  Serial.print(F("Enviando JSON: "));
   Serial.println(json);
 
   int httpCode = http.POST(json);
-  
+
   if (httpCode > 0) {
     Serial.print(F("Respuesta HTTP: "));
     Serial.println(httpCode);
+
+    // Leer la respuesta del servidor
+    String response = http.getString();
+    Serial.print(F("Respuesta del servidor: "));
+    Serial.println(response);
+
+    // Parsear JSON de respuesta
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, response);
+
+    if (!error) {
+      // Leer actuator_command.alarm (por defecto false si no existe)
+      bool alarmOn = doc["actuator_command"]["alarm"] | false;
+
+      Serial.print(F("Alarm command recibido: "));
+      Serial.println(alarmOn ? F("true") : F("false"));
+
+      // Control del LED segun la alarma
+      if (alarmOn) {
+        digitalWrite(LED_PIN, HIGH);
+        Serial.println(F("⚠ ALERTA MEDICA DETECTADA! LED ENCENDIDO"));
+      } else {
+        digitalWrite(LED_PIN, LOW);
+        Serial.println(F("Alarma desactivada. LED APAGADO"));
+      }
+    } else {
+      Serial.print(F("Error parsing JSON: "));
+      Serial.println(error.c_str());
+    }
+
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
       Serial.println(F("Datos enviados exitosamente!"));
     }
+
   } else {
     Serial.print(F("Error HTTP: "));
     Serial.println(http.errorToString(httpCode));
@@ -168,19 +215,23 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) delay(10);
 
+  // Configurar actuadores
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
   printHeader("ESP32 Monitor de Signos Vitales");
   Serial.println(F("MAX30102 (BPM, SpO2) + MLX90614 (Temperatura)"));
-  Serial.println(F(""));
+  Serial.println();
 
   // Conectar WiFi
   connectWiFi();
-  Serial.println(F(""));
+  Serial.println();
 
   // Inicializar sensores
   Serial.println(F("Inicializando sensores..."));
   maxReader.begin();
   tempReader.begin();
-  Serial.println(F(""));
+  Serial.println();
 
   appState = STATE_WAIT_MAX_PROMPT;
 }
@@ -211,7 +262,7 @@ void loop() {
     // ----------------------------------------
     case STATE_READING_MAX: {
       unsigned long elapsed = millis() - stateStartMs;
-      
+
       if (elapsed >= TIEMPO_LECTURA_MAX) {
         printHeader("Lectura MAX30102 Completada");
         Serial.println(F("Listo para medir temperatura."));
@@ -223,7 +274,7 @@ void loop() {
       // Leer y procesar datos
       maxReader.stepAndComputeAndPrint();
 
-      // Acumular valores válidos
+      // Acumular valores validos
       if (maxReader.isHeartRateValid()) {
         vitals.bpmSum += maxReader.getHeartRate();
         vitals.bpmCount++;
@@ -249,7 +300,7 @@ void loop() {
       if (waitForUserConfirmation()) {
         printHeader("Midiendo Temperatura");
         Serial.println(F("Acerca el sensor a tu frente o muneca."));
-        Serial.println(F(""));
+        Serial.println();
         stateStartMs = millis();
         appState = STATE_READING_MLX;
       }
@@ -258,18 +309,18 @@ void loop() {
     // ----------------------------------------
     case STATE_READING_MLX: {
       unsigned long elapsed = millis() - stateStartMs;
-      
+
       if (elapsed >= TIEMPO_LECTURA_MLX) {
         appState = STATE_SENDING_DATA;
         break;
       }
 
       double temp = tempReader.readObjectTemp();
-      
-      if (temp > 0) {  // Lectura válida
+
+      if (temp > 0) {  // Lectura valida
         vitals.tempSum += temp;
         vitals.tempCount++;
-        
+
         Serial.print(F("Temperatura: "));
         Serial.print(temp, 1);
         Serial.println(F(" C"));
@@ -284,9 +335,9 @@ void loop() {
     // ----------------------------------------
     case STATE_SENDING_DATA: {
       printHeader("Resumen de Mediciones");
-      
-      float bpmAvg = vitals.getBpmAvg();
-      float spo2Avg = vitals.getSpo2Avg();
+
+      float  bpmAvg  = vitals.getBpmAvg();
+      float  spo2Avg = vitals.getSpo2Avg();
       double tempAvg = vitals.getTempAvg();
 
       Serial.print(F("BPM Promedio:    "));
@@ -319,9 +370,9 @@ void loop() {
         Serial.println(F("Sin datos validos"));
       }
 
-      Serial.println(F(""));
+      Serial.println();
 
-      // Enviar a API
+      // Enviar a API (solo si hay BPM y temperatura validos)
       if (vitals.bpmCount > 0 && vitals.tempCount > 0) {
         sendToAPI(bpmAvg, spo2Avg, tempAvg);
       } else {
@@ -337,8 +388,7 @@ void loop() {
       printHeader("Medicion Finalizada");
       Serial.println(F("Reinicia el ESP32 para una nueva medicion."));
       Serial.println(F("O escribe 'si' para medir de nuevo."));
-      
-      // Permitir reinicio
+
       if (waitForUserConfirmation()) {
         appState = STATE_WAIT_MAX_PROMPT;
       }
