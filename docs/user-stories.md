@@ -1,137 +1,114 @@
-# User Stories – Monitor de Signos Vitales ESP32
-
-Este documento contiene las user stories con criterios de aceptación para el proyecto **ESP32 Monitor de Signos Vitales**, enfocado en los requisitos funcionales de medición de BPM, SpO₂ y temperatura corporal.  
-Los criterios siguen el formato **Given–When–Then**, descritos en tercera persona para especificar comportamientos observables, siguiendo el estilo del documento de referencia del curso.
+# User Stories
+This document contains the user stories with acceptance criteria for the ESP32 Vital Signs Monitor, focusing on the functional requirements of measuring BPM, SpO₂, body temperature, sending data to a remote API, and activating an alarm through an LED indicator.  
+The criteria use the Given–When–Then format in third person to specify observable behavior.
 
 ---
 
-## US01: Start measuring BPM and SpO₂
+## US01: Start a Guided Measurement Cycle
 As a user of the device,  
-I want to start the measurement of heart rate (BPM) and blood oxygen level (SpO₂) through console confirmation,  
-so that the system begins recording valid biometric samples on demand.
+I want to begin the measurement process only after confirming it,  
+so that I can control when the system starts collecting vital sign data.
 
 ### Acceptance Criteria
-**Scenario 1: Start MAX30102 measurement upon confirmation**  
-- **Given** the device has initialized its sensors and displays “Listo para medir BPM y SpO₂” through Serial,  
-- **When** the user types “si” in the Serial console,  
-- **Then** the system begins the MAX30102 measurement phase and starts filling the buffer with biometric samples.
+**Scenario 1: Measurement begins after console confirmation**  
+- **Given** the ESP32 is powered on, sensors are initialized, and the system displays “Type 'si' to begin”,  
+- **When** the user types “si”, “s”, “yes”, or “y” in the serial monitor,  
+- **Then** the system clears previous measurement data, initializes the MAX30102 buffers, and begins the BPM and SpO₂ measurement phase.
 
 ---
 
-## US02: Measure and process heart rate (BPM) samples
+## US02: Measure and Average BPM and SpO₂
 As a user of the device,  
-I want the system to detect valid BPM values during the measurement window,  
-so that the average BPM can be computed reliably.
+I want the system to measure BPM and SpO₂ for a defined time interval,  
+so that I can obtain representative average values of my vital signs.
 
 ### Acceptance Criteria
-**Scenario 1: Detection and accumulation of BPM**  
-- **Given** the MAX30102 sensor is actively collecting IR and Red samples,  
-- **When** valid heartbeats are detected within the configured time window,  
-- **Then** the system accumulates BPM values into an internal counter and updates the progress periodically.
+**Scenario 1: Timed MAX30102 measurement**  
+- **Given** the user has confirmed the start of the BPM and SpO₂ measurement,  
+- **When** the system reads data from the MAX30102 sensor for 40 seconds, storing only valid readings,  
+- **Then** the system periodically displays progress, accumulates valid samples, and when the time ends, prompts the user to continue with the temperature measurement.
 
 ---
 
-## US03: Measure and process SpO₂ samples
+## US03: Measure and Average Body Temperature
 As a user of the device,  
-I want the system to calculate SpO₂ values using the MAX30102 signal buffers,  
-so that the average oxygen saturation can be computed after measurement.
+I want the system to take temperature readings for a short interval,  
+so that I can obtain a reliable averaged temperature value.
 
 ### Acceptance Criteria
-**Scenario 1: Detection and accumulation of SpO₂**  
-- **Given** the MAX30102 sensor maintains IR and Red buffers,  
-- **When** the system computes a valid SpO₂ ratio R and the value falls within physiological ranges,  
-- **Then** the system accumulates the SpO₂ value and marks it as valid for averaging.
+**Scenario 1: Timed MLX90614 measurement**  
+- **Given** the BPM and SpO₂ measurement has finished and the system asks the user to confirm temperature measurement,  
+- **When** the user types “si” and the system reads temperature values for 10 seconds,  
+- **Then** the system records only valid readings, displays them in real time, and computes their average when the time expires.
 
 ---
 
-## US04: Start measuring body temperature
+## US04: Display a Summary of Averaged Measurements
 As a user of the device,  
-I want to begin temperature measurement only after confirming through Serial,  
-so that temperature readings occur only when the sensor is properly positioned.
+I want to see a summary of the averaged vital signs,  
+so that I can understand the collected results at a glance.
 
 ### Acceptance Criteria
-**Scenario 1: Start MLX90614 measurement upon confirmation**  
-- **Given** the system has finished the BPM/SpO₂ phase and displays “Listo para medir temperatura”,  
-- **When** the user enters “si” via Serial,  
-- **Then** the system starts the MLX90614 temperature reading phase for the configured duration.
+**Scenario 1: Summary printed in serial monitor**  
+- **Given** the system has completed both measurement phases,  
+- **When** the system enters the summary state,  
+- **Then** it displays the averaged BPM, SpO₂, and temperature values along with the number of valid samples used for each parameter, or shows “No valid data” when applicable.
 
 ---
 
-## US05: Record valid temperature samples
+## US05: Send Vital Signs to a Remote API in JSON Format
 As a user of the device,  
-I want the system to validate each temperature reading,  
-so that only realistic human body temperature values are used in the final average.
+I want the measured vital signs to be sent to a remote API,  
+so that they can be stored or processed externally.
 
 ### Acceptance Criteria
-**Scenario 1: Accept only valid human temperature range**  
-- **Given** the MLX90614 sensor returns object temperature values,  
-- **When** a reading is between 20°C and 45°C,  
-- **Then** the sample is added to the temperature accumulator; otherwise, the system requests the user to adjust the sensor.
+**Scenario 1: Successful JSON transmission with device credentials**  
+- **Given** the ESP32 is connected to WiFi and valid BPM and temperature averages exist,  
+- **When** the system builds a JSON body containing `device_id`, `bpm`, `temp`, and `spo2`, and sends an HTTP POST request with proper headers,  
+- **Then** the API receives the data, and the system displays the HTTP status and “Data sent successfully!” if the response code is 200 or 201.
 
 ---
 
-## US06: Compute averages for all biometric measurements
+## US06: Handle Missing WiFi During Data Transmission
 As a user of the device,  
-I want the device to calculate average BPM, SpO₂ and temperature values,  
-so that the final output represents a stable and reliable measurement.
+I want the system to detect when WiFi is unavailable,  
+so that the program does not crash and I understand why data was not sent.
 
 ### Acceptance Criteria
-**Scenario 1: Average valid samples**  
-- **Given** the system has gathered valid BPM, SpO₂ and temperature samples,  
-- **When** the measurement phases conclude,  
-- **Then** the system computes the average for each parameter and displays a summary with sample count and average values.
+**Scenario 1: Attempt to send while offline**  
+- **Given** the ESP32 is not connected to WiFi,  
+- **When** the system attempts to send data to the API,  
+- **Then** the system prints “WiFi disconnected. Cannot send data.” and skips the HTTP request without halting the device.
 
 ---
 
-## US07: Send biometric data to an external API
-As a developer or system integrator,  
-I want the device to send the averaged BPM, SpO₂ and temperature in a JSON object via HTTP POST,  
-so that the data can be stored or analyzed externally.
+## US07: Process API Response and Activate LED Alarm
+As a user of the device,  
+I want the system to react to the server’s alarm command,  
+so that I receive a visual alert indicating a potential health risk.
 
 ### Acceptance Criteria
-**Scenario 1: Successful POST request with JSON payload**  
-- **Given** WiFi is connected and valid averages exist for BPM, SpO₂ and temperature,  
-- **When** the system sends the POST request to the configured API URL,  
-- **Then** the system transmits a JSON payload containing the averaged values and displays the HTTP response status.
+**Scenario 1: LED controlled by `actuator_command.alarm`**  
+- **Given** the system has received a valid JSON response from the API,  
+- **When** the system parses the field `actuator_command.alarm`,  
+- **Then** the LED turns ON when the value is `true`, turns OFF when `false`, and the system prints the alarm status in the serial monitor.
+
+**Scenario 2: Invalid JSON response**  
+- **Given** the system receives an HTTP response with an invalid JSON body,  
+- **When** the system attempts to parse it,  
+- **Then** the system displays a parsing error message and leaves the LED in its current state without interrupting execution.
 
 ---
 
-## US08: Handle WiFi connection for API communication
-As a user or integrator,  
-I want the device to attempt WiFi connection at startup,  
-so that network-dependent features become available without manual configuration.
+## US08: Allow Repeated Measurement Cycles
+As a user of the device,  
+I want to start a new measurement cycle after one has finished,  
+so that I can perform multiple readings without reprogramming the ESP32.
 
 ### Acceptance Criteria
-**Scenario 1: WiFi connection attempt and notification**  
-- **Given** valid SSID and password parameters,  
-- **When** the system boots up,  
-- **Then** it attempts to connect to WiFi, displays connection progress, and prints the IP address if successful.
+**Scenario 1: Restart process after completion**  
+- **Given** the system displays “Measurement finished” after completing a cycle,  
+- **When** the user types “si” again in the serial monitor,  
+- **Then** the system resets the workflow and returns to the state where BPM and SpO₂ measurement can begin again.
 
 ---
-
-## US09: Manage interaction workflow through Serial console
-As a user without a graphical interface,  
-I want to control the whole process through Serial-based prompts,  
-so that the device can operate in environments with minimal UI.
-
-### Acceptance Criteria
-**Scenario 1: Step-by-step interactive flow**  
-- **Given** the system is in a waiting state for the next measurement phase,  
-- **When** the user inputs a confirmation command ("si"),  
-- **Then** the system transitions to the next measurement state and continues the workflow.
-
----
-
-## US10: Provide progress feedback during measurement
-As a user of the measurement system,  
-I want the device to show progress while collecting samples,  
-so that I can know how much time remains for each measurement phase.
-
-### Acceptance Criteria
-**Scenario 1: Progress bar during BPM/SpO₂ phase**  
-- **Given** the MAX30102 measurement window is active,  
-- **When** at least 5 seconds have elapsed since the last update,  
-- **Then** the system displays a progress bar with percentage and remaining time on Serial.
-
----
-
